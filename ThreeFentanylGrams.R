@@ -1,4 +1,4 @@
-
+#### Libraries ####
 
 library(lmtest)
 library(plyr)
@@ -9,6 +9,7 @@ library(reshape2)
 library(scales)
 library(data.table)
 
+#### Data compilation ####
 ## Download both Grams folders into one folder. Do not include the May 29th 2014 folder (not in format).
 
 setwd("C:/Users/jacobmiller21/Desktop/Darknet Data")
@@ -29,6 +30,7 @@ for (i in 1:length(gramsFiles)) {
 
 ## Intermediate storage: write.csv(grams, "CompiledGramsTotalFentanyl.csv")
 
+#### Data Cleaning ####
 ## Load intermediate file if above step has been performed and written to csv
 ## setwd("C:/Users/jacobmiller21/Desktop/Darknet Data")
 ## grams <- read.csv(file = "CompiledGramsTotalFentanyl.csv", stringsAsFactors = FALSE)
@@ -281,7 +283,7 @@ cleangrams <- cleangrams[!duplicated(cleangrams[,c("vendor_name", "market_name",
 cleangrams$fent <- cleangrams$NameAcetyl == FALSE & cleangrams$NameButyr == FALSE &
   cleangrams$NameCitrate == FALSE & cleangrams$NameFuranyl == FALSE
 
-
+#### Median Prices by Month Exploration #### 
 ## Calculate beginning and ending median prices
 ## 100mg
 median(cleangrams[cleangrams$NameAcetyl & cleangrams$Amt100mg &
@@ -341,7 +343,7 @@ median(cleangrams[cleangrams$fent & cleangrams$Amt500mg &
                     month(cleangrams$Date) == 4 & year(cleangrams$Date) == 2016,
                   "dollarPrice"])
 
-
+#### Dataframes for graphs ####
 
 
 ts <- cleangrams %>% group_by_(.dots=c("YrMonthBi", "Analogue", "Amt")) %>% 
@@ -378,6 +380,26 @@ tsAmt <- cleangrams %>% group_by_(.dots=c("YrMonthBi", "Amt")) %>%
             vendors=length(unique(vendor_name)))
 
 
+#### Exploratory Graphs ####
+
+## Total Vendors for Popular Amounts
+
+tvendors <- cleangrams %>% group_by_(.dots=c("YrMonthBi", "Analogue")) %>% 
+  summarize(vendors=length(unique(vendor_name)))
+
+ggplot(tvendors, aes(x=YrMonthBi, y=vendors, color = Analogue)) +
+  geom_line(size = 1) +
+  ggtitle("Unique Vendors for Popular Amounts
+          Event1 = Onymous, Event2 = US Acetyl Ban, Event3 = China Ban") +
+  xlab("Date") + ylab("Number of Vendors") +
+  theme(plot.title = element_text(hjust = 0.5, size = 12)) +
+  geom_vline(xintercept=as.numeric(as.Date("2015-10-01")),
+             color = "black", lwd = 1.5) +
+  geom_vline(xintercept=as.numeric(as.Date("2014-11-06")),
+             color = "black", lwd = 1.5) +
+  geom_vline(xintercept=as.numeric(as.Date("2015-05-21")),
+             color = "black", lwd = 1.5)
+ggsave("Unique Vendors.jpeg", device = "jpeg")
 
 ## 100mg
 ggplot(ts[ts$Amt=="Amt100mg",], aes(x=YrMonthBi, y=median, color = Analogue)) +
@@ -626,18 +648,10 @@ ggplot(tsComp[tsComp$Composite <2 & tsComp$Analogue != "Citrate" & tsComp$Analog
   theme(plot.title = element_text(hjust = 0.5, size = 12))
 ggsave("Composite Analogues.jpeg", device = "jpeg")
 
-# Removed lines
-#+
-#  geom_vline(xintercept=as.numeric(as.Date("2015-10-01")),
-#             color = "black", lwd = 1.5) +
-#  geom_vline(xintercept=as.numeric(as.Date("2014-11-06")),
-#             color = "black", lwd = 1.5) +
-#  geom_vline(xintercept=as.numeric(as.Date("2015-05-21")),
-#             color = "black", lwd = 1.5)
 
 
-
-## Statistical Analysis -- Linear Model
+#### Statistical Analysis ####
+# Linear Model
 ts$lnMedian <- log(ts$median)
 ts$Onymous <- ts$YrMonthBi >= as.Date("2014-11-06")
 ts$PostAcetylSched1 <- ts$YrMonthBi >= as.Date("2015-05-21")
@@ -670,14 +684,24 @@ summary(modelLog)
 
 x <- data.frame(ModelLog, resid = resid(modelLog), predict = predict(modelLog))
 
+## Run model again without Butyr fentanyl, 
+## thinnest market at end of data set
+
+modelts <- ts[ts$Analogue != "Butyr",]
+modelts$YrMonthBi <- as.numeric(modelts$YrMonthBi - as.Date("2014-06-01"))
+ModelLog <- modelts[,c("lnMedian", "YrMonthBi",
+                       "Amt", "Analogue",
+                       "Onymous", "PostAcetylSched1", "PostChinaBan",
+                       "TrendOnym", "TrendSched1", "TrendChina")]
+
+modelLog <- lm(lnMedian ~. + YrMonthBi*Analogue, data = ModelLog)
+summary(modelLog)
 
 
 
 
 
-
-
-
+#### CDC Graphs (Opioid and Synth) and Confusion Matrix ####
 
 ## Graphs derived from CDC Wonder database
 OpioidDeaths <- read.csv("Deaths from All Opiates.csv")
