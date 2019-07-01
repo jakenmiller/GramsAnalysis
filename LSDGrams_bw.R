@@ -1,13 +1,13 @@
 #### Libraries ####
 
 library(lmtest)
-library(plyr)
 library(dplyr)
 library(lubridate)
 library(ggplot2)
 library(reshape2)
 library(scales)
 library(data.table)
+library(stringr)
 
 #### Data compilation ####
 ## Download BOTH Grams folders into one folder. Do not include the May 29th 2014 folder (not in format).
@@ -35,8 +35,8 @@ for (i in 1:length(gramsFiles)) {
 
 #### Data Cleaning ####
 ## Load intermediate file if above step has been performed and written to csv
-## setwd("C:/Users/jacobmiller21/Desktop/Darknet Data")
-## grams <- read.csv(file = "CompiledGramsLSD.csv", stringsAsFactors = FALSE)
+setwd("C:/Users/jacobmiller21/Desktop/Darknet Data")
+grams <- read.csv(file = "CompiledGramsLSD.csv", stringsAsFactors = FALSE)
 ## Clean out listings where price was not pulled. Mostly Agora from early on.
 grams <- grams[grams$price != 0,]
 
@@ -51,8 +51,8 @@ grams <- grams[grams$price != 0,]
 
 btc <- read.csv("BTC Historical.csv")
 btc$Date <- as.Date(btc$Date, format = "%m/%d/%Y")
-grams <- join(grams, btc, by = "Date")
 grams$Date <- as.Date(grams$Date)
+grams <- merge(grams, btc, by = "Date")
 rm(btc)
 
 ## Clean out "X" columns
@@ -65,7 +65,7 @@ grams$dollarPrice <- grams$price * grams$btcPrice
 
 ## Clean out listings with text as prices (not numbers)
 grams <- grams[complete.cases(grams[,"dollarPrice"]),]
-
+length(unique(grams$vendor_name))
 
 
 
@@ -167,7 +167,7 @@ cleangrams <- cleangrams[!duplicated(cleangrams[,c("vendor_name", "market_name",
 rm(grams)
 ## Include only most popular amounts
 
-## Screen out listings with issues
+## Screen out listings with issues or where exact quantity is unknown
 
 df <- cleangrams[cleangrams$Quant != FALSE,]
 df[,"Quant"] <- as.numeric(df[,"Quant"])
@@ -177,49 +177,115 @@ df$Cost_per_qty <- round(df$Cost_per_qty, digits = 3)
 
 # Cost per tab below 75 cents or above $25 per tab were almost
 # exclusively listings that were either unclear, fat finger errors,
-# or structured in such a way proving a regular expression method for
-# cleaning would prove extremely difficult.
+# or structured in such a way that the listing was difficult to understand.
 df <- df[df$Cost_per_qty > 0.75,]
 df <- df[df$Cost_per_qty < 25,]
-head(sort(table(df$vendor_name), decreasing = TRUE),50)
-
 
 
 ## Add two events of interest
+
+## Break up each listing into 10 day increments
+df$TrendOnym <- as.numeric(df$Date) - as.numeric(as.Date("2014-11-05"))
+df$TrendOnym <- round_any(df$TrendOnym, 10, f = ceiling)
+df$TrendChin <- as.numeric(df$Date) - as.numeric(as.Date("2015-10-01"))
+df$TrendChin <- round_any(df$TrendChin, 10, f = ceiling)
+## Add two events of interest
 df$Onymous <- df$Date >= as.Date("2014-11-06")
-df$PostAcetylChinaBan <- df$Date >= as.Date("2015-10-01")
+df$ChinaBan <- df$Date >= as.Date("2015-10-01")
 
-
-
-
-
-
-## Break up each listing into bi-monthly data
-for (x in 1:nrow(df)) {
-  df[x,"YrMonthBi"] <- paste(year(df[x,"Date"]),
-                                     month(df[x,"Date"]),
-                                     if (day(df[x,"Date"]) >=20) {
-                                       "20"
-                                     } else if (day(df[x,"Date"]) >= 10) {
-                                       "10"
-                                     } else {
-                                       "01"
-                                     }, sep = "-")
-}
-rm(x)
-
-df$YrMonthBi <- as.Date(df$YrMonthBi)
-
-## Only primary amounts and remove the "joint sales with ecstasy"
+## Only include most popular  amounts 
+# and remove the "joint sales with ecstasy"
 df1 <- df[df$Quant == 5 | df$Quant == 10 | df$Quant == 25 | df$Quant == 50 | 
             df$Quant == 100 | df$Quant == 250 | df$Quant == 500,]
 df1 <- df1[!grepl(pattern = "mdma",x = df1$lower),]
-## Remove listings that appear more than once during the same 10 day period
-#df <- df[!duplicated(df[,c("vendor_name", "market_name", "name", "YrMonthBi")]),]
-
-
 # Treat quantities as factors
 df1$QuantF <- as.factor(df1$Quant)
+df1$DateNum <- as.numeric(df1$Date - as.Date("2014-06-09"))
+#write.csv(df1, "LSD_Cleaned.csv")
+
+
+
+#### Onymous Analysis ####
+# DateNum variable is days since 2014-06-09
+# Onymous took place on 2014-11-06 day 150
+# China ban took place on 2015-01-10 day 479
+
+## Remove listings that appear more than once during the same 10 day period
+DataOnym <- df1[!duplicated(df1[,c("vendor_name", "market_name", "name", "TrendOnym")]),]
+DataOnym <- DataOnym[,c("dollarPrice", "DateNum","QuantF","Onymous", "TrendOnym")]
+colnames(DataOnym)[3] <- "Amt"
+# Set Trend Variables and capture interested period (+/- 120 days)
+# (add one to window for bracketing within Stata to complete full 120 days)
+# Allows easy adjustment of window and randomization for EventDate
+# for robustness checks
+window <- 121
+EventDate <- 150
+# Shift to day before because of bracketing in Stata for binscatter
+DataOnym$Trend <- DataOnym$TrendOnym - 1
+DataOnym$OnymousTrend <- DataOnym$Trend * DataOnym$Onymous
+DataOnym <- DataOnym[c("dollarPrice", "Trend", "Onymous", 
+                       "OnymousTrend", "Amt")]
+DataOnym <- DataOnym[(DataOnym$Trend >= (0 - window)) &
+                       (DataOnym$Trend <= (0 + window)),]
+# Convert to log form for dollar price
+DataOnym$dollarPrice <- log(DataOnym$dollarPrice)
+colnames(DataOnym)[1] <- "LogDollarPrice"
+# Convert for stata
+DataOnym$Onymous <- ifelse(DataOnym$Onymous, 1, 0)
+
+#DataOnym <- read.csv("DataOnymousLSD.csv")
+#DataOnym$Amt <- as.factor(DataOnym$Amt)
+Onym1 <- lm(LogDollarPrice ~ Trend + Onymous + OnymousTrend + Amt,
+            data = DataOnym)
+summary(Onym1)
+#write.csv(DataOnym, "DataOnymousLSD.csv", row.names = F)
+
+
+
+#### China Ban Analysis ####
+# DateNum variable is days since 2014-06-09
+# Onymous took place on 2014-11-06 day 150
+# China ban took place on 2015-01-10 day 479
+
+
+## Remove listings that appear more than once during the same 10 day period
+DataChina <- df1[!duplicated(df1[,c("vendor_name", "market_name", "name", "TrendChin")]),]
+DataChina <- DataChina[,c("dollarPrice", "DateNum","QuantF","ChinaBan", "TrendChin")]
+colnames(DataChina)[3] <- "Amt"
+# Set Trend Variables and capture interested period (+/- 120 days)
+# (add one to window for bracketing within Stata to complete full 120 days)
+# Allows easy adjustment of window and randomization for EventDate
+# for robustness checks
+window <- 121
+EventDate <- 479
+
+DataChina$Trend <- DataChina$TrendChin - 1
+DataChina$ChinaTrend <- DataChina$Trend * DataChina$ChinaBan
+DataChina <- DataChina[c("dollarPrice","Trend","ChinaBan",
+                         "ChinaTrend","Amt")]
+
+DataChina <- DataChina[(DataChina$Trend >= (0 - window)) &
+                         (DataChina$Trend <= (0 + window)),]
+# Convert to log form for dollar price
+DataChina$dollarPrice <- log(DataChina$dollarPrice)
+colnames(DataChina)[1] <- "LogDollarPrice"
+# Convert boolean to numeric for stata
+DataChina$ChinaBan <- ifelse(DataChina$ChinaBan, 1, 0)
+
+#DataChina <- read.csv("DataChinaLSD.csv")
+China1 <- lm(LogDollarPrice ~ Trend + ChinaBan + ChinaTrend + Amt,
+             data = DataChina)
+summary(China1)
+
+#write.csv(DataChina, "DataChinaLSD.csv", row.names = F)
+
+
+
+
+
+
+
+
 
 #### Dataframes for graphs ####
 mean(df1$Cost_per_qty)
@@ -445,3 +511,4 @@ oregChina <- outreg(list("LSD" = LSDmodelChin,
                         "Fentanyl" = FentModelChina), 
                    print.results = FALSE, float = TRUE, type = "csv")
 cat(oregChina, file = "oregChina.csv")
+
