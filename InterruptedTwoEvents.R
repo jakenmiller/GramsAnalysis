@@ -2,7 +2,9 @@
 
 library(ggplot2)
 library(lmtest)
+library(plyr)
 library(dplyr)
+library(lubridate)
 library(reshape2)
 library(scales)
 library(data.table)
@@ -405,6 +407,10 @@ for (i in seq(from = 280, to = 360, by = 10)) {
 #### Exploratory Graphs ####
 
 cg15 <- cleangrams[!duplicated(cleangrams[,c("vendor_name", "market_name", "name", "YrMonthBi")]),]
+
+cg15 <- cg15[!(grepl(pattern = "mannitol inositol", x = cg15$LowerDesc, fixed = TRUE) |
+      grepl(pattern = "mannitol mix", x = cg15$LowerDesc, fixed = TRUE)),]
+
 
 ts <- cg15 %>% group_by(YrMonthBi, Analogue, Amt) %>% 
   summarise(mean=mean(dollarPrice), median=median(dollarPrice),
